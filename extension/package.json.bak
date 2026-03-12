@@ -1,7 +1,7 @@
 {
-  "name": "ing-sql-restricted",
-  "displayName": "ING SQL (Restricted)",
-  "description": "ING Oracle SQL Developer (Restricted - No Export/Clipboard)",
+  "name": "ing-sql",
+  "displayName": "ING SQL",
+  "description": "Oracle SQL Developer for VS Code (ING Specific)",
   "version": "0.1.0",
   "publisher": "ing-sql",
   "engines": {
