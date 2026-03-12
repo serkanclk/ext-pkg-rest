@@ -431,6 +431,20 @@
           "type": "string",
           "default": "YYYY-MM-DD HH24:MI:SS.FF TZR",
           "description": "Oracle NLS_TIMESTAMP_TZ_FORMAT setting"
+        },
+        "ingSql.connections": {
+          "type": "array",
+          "default": [],
+          "description": "Database connections"
+        },
+        "ingSql.results.location": {
+          "type": "string",
+          "default": "editor",
+          "enum": [
+            "bottom",
+            "editor"
+          ],
+          "description": "Where to display query results"
         }
       }
     },
