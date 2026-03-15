@@ -1,8 +1,8 @@
 {
-  "name": "ing-sql-restricted",
-  "displayName": "ING SQL (Restricted)",
-  "description": "ING Oracle SQL Developer (Restricted - No Export/Clipboard)",
-  "version": "0.1.0",
+  "name": "ing-sql-restricted-intl",
+  "displayName": "ING SQL (Restricted) + Intellisense",
+  "description": "ING Oracle SQL Developer (Restricted + Intellisense)",
+  "version": "1.0.0",
   "publisher": "ing-sql",
   "engines": {
     "vscode": "^1.85.0"
@@ -131,6 +131,18 @@
         "title": "Describe",
         "category": "Oracle",
         "icon": "$(info)"
+      },
+      {
+        "command": "ingSql.importData",
+        "title": "Import Data",
+        "category": "Oracle",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ingSql.toUpperCase",
+        "title": "Uppercase Selection",
+        "category": "Oracle",
+        "icon": "$(case-sensitive)"
       },
       {
         "command": "ingSql.generateSelect",
@@ -267,6 +279,11 @@
           "command": "ingSql.deleteSnippet",
           "when": "view == ingSql.snippets && viewItem == sql-snippet",
           "group": "snippet@2"
+        },
+        {
+          "command": "ingSql.importData",
+          "when": "view == ingSql.objectBrowser && viewItem == connection-connected",
+          "group": "inline@3"
         },
         {
           "command": "ingSql.connect",
@@ -458,6 +475,18 @@
       {
         "command": "ingSql.executeScript",
         "key": "f5",
+        "when": "editorTextFocus && resourceLangId == oraclesql"
+      },
+      {
+        "command": "ingSql.newSqlWorksheet",
+        "key": "alt+f10",
+        "mac": "alt+f10",
+        "when": "editorTextFocus && resourceLangId == oraclesql"
+      },
+      {
+        "command": "ingSql.toUpperCase",
+        "key": "ctrl+shift+u",
+        "mac": "cmd+shift+u",
         "when": "editorTextFocus && resourceLangId == oraclesql"
       },
       {

@@ -3,10 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BUILD_CONFIG = void 0;
 /**
  * Build-time configuration for feature toggling.
- * This file is modified during the build process to enable/disable restricted features.
+ * This file is modified during the build process.
  */
 exports.BUILD_CONFIG = {
     isRestricted: true,
-    versionSuffix: "-restricted"
+    hasIntellisense: true,
+    versionSuffix: "-restr-intl"
 };
 //# sourceMappingURL=buildConfig.js.map
