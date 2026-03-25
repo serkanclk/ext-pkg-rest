@@ -40,33 +40,44 @@ exports.OracleService = void 0;
 const vscode = __importStar(require("vscode"));
 const oracledb_1 = __importDefault(require("oracledb"));
 const connectionManager_1 = require("./connectionManager");
-// Auto-fetch LOBs and date/timestamp types as strings.
-// Dates MUST be fetched as strings so Oracle applies NLS session formatting
-// (set via ALTER SESSION in applyNlsSettings). Without this, oracledb returns
-// native JS Date objects which bypass Oracle's NLS_DATE_FORMAT entirely.
-// Wrapped in try-catch because some oracledb versions/modes don't support all DB_TYPE_ constants.
+// Force date/timestamp types to be fetched as strings so Oracle applies
+// NLS session formatting (e.g. NLS_DATE_FORMAT set via ALTER SESSION).
+// Without this, oracledb returns native JS Date objects that bypass NLS entirely.
+//
+// We use fetchTypeHandler (oracledb 6.x) because fetchAsString only accepts
+// legacy constants (oracledb.DATE, oracledb.NUMBER) and throws NJS-021 if you
+// pass DB_TYPE_* constants like DB_TYPE_DATE.
 try {
-    oracledb_1.default.fetchAsString = [
-        oracledb_1.default.CLOB,
+    const dateTypes = new Set([
         oracledb_1.default.DB_TYPE_DATE,
         oracledb_1.default.DB_TYPE_TIMESTAMP,
         oracledb_1.default.DB_TYPE_TIMESTAMP_TZ,
-        oracledb_1.default.DB_TYPE_TIMESTAMP_LTZ
-    ];
+        oracledb_1.default.DB_TYPE_TIMESTAMP_LTZ,
+    ].filter(t => t !== undefined));
+    oracledb_1.default.fetchTypeHandler = function (metaData) {
+        if (dateTypes.has(metaData.dbType)) {
+            return { type: oracledb_1.default.STRING };
+        }
+    };
+    console.log(`[ING SQL] fetchTypeHandler configured for ${dateTypes.size} date/timestamp type(s)`);
+}
+catch (err) {
+    console.warn('[ING SQL] Could not set fetchTypeHandler:', err.message);
+}
+// Fetch CLOBs as strings and BLOBs as buffers using legacy API (safe on all versions)
+try {
+    oracledb_1.default.fetchAsString = [oracledb_1.default.CLOB];
+}
+catch { /* skip */ }
+try {
     oracledb_1.default.fetchAsBuffer = [oracledb_1.default.BLOB];
 }
-catch {
-    // Fallback: only set universally supported types
-    try {
-        oracledb_1.default.fetchAsString = [oracledb_1.default.CLOB];
-        oracledb_1.default.fetchAsBuffer = [oracledb_1.default.BLOB];
-    }
-    catch { /* extension will still load */ }
-    console.warn('Could not set full fetchAsString types — date formatting may differ.');
-}
+catch { /* skip */ }
 class OracleService {
     static instance;
     static activeCursors = new Map();
+    /** Connection currently executing a query — used for cancellation via break() */
+    static activeRunningConn = null;
     static thickModeInitialized = false;
     constructor() { }
     static getInstance() {
@@ -77,6 +88,22 @@ class OracleService {
     }
     static isThickMode() {
         return OracleService.thickModeInitialized;
+    }
+    /**
+     * Cancel the currently running query by calling connection.break().
+     * This causes the pending execute() to throw ORA-01013.
+     */
+    static async cancelRunningQuery() {
+        if (OracleService.activeRunningConn) {
+            try {
+                await OracleService.activeRunningConn.break();
+                return true;
+            }
+            catch (err) {
+                console.warn('[ING SQL] Failed to cancel query:', err.message);
+            }
+        }
+        return false;
     }
     static initializeThickMode() {
         const clientPath = (process.env.ORACLE_CLIENT_PATH || '/usr/lib/oracle/23/client64/lib').trim();
@@ -183,11 +210,13 @@ class OracleService {
         try {
             const config = vscode.workspace.getConfiguration('ingSql');
             const batchSize = options.batchSize || config.get('resultGrid.maxRows', 100);
+            OracleService.activeRunningConn = conn;
             const result = await conn.execute(sql, binds, {
                 outFormat: oracledb_1.default.OUT_FORMAT_ARRAY,
                 resultSet: true,
                 autoCommit: false,
             });
+            OracleService.activeRunningConn = null;
             if (!result.resultSet) {
                 throw new Error("Query did not return a ResultSet.");
             }
@@ -223,6 +252,7 @@ class OracleService {
             }
         }
         catch (err) {
+            OracleService.activeRunningConn = null;
             if (!isSessionConn) {
                 await conn.close();
             }
@@ -318,7 +348,9 @@ class OracleService {
             const autoCommit = options.autoCommit !== undefined
                 ? options.autoCommit
                 : config.get('autoCommit', false);
+            OracleService.activeRunningConn = conn;
             const result = await conn.execute(sql, binds, { autoCommit });
+            OracleService.activeRunningConn = null;
             return {
                 rowsAffected: result.rowsAffected || 0,
                 statement: sql,

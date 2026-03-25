@@ -6,7 +6,6 @@ const ROOT = path.join(__dirname, '..');
 const RELEASES_DIR = path.join(ROOT, 'releases');
 const REGULAR_DIR = path.join(RELEASES_DIR, 'regular');
 const RESTRICTED_DIR = path.join(RELEASES_DIR, 'restricted');
-const ARCHIVE_DIR = path.join(RELEASES_DIR, 'archive');
 
 const targets = ['darwin-arm64', 'linux-x64'];
 const builds = [
@@ -17,28 +16,26 @@ const builds = [
 ];
 
 function ensureDirs() {
-    [RELEASES_DIR, REGULAR_DIR, RESTRICTED_DIR, ARCHIVE_DIR].forEach(dir => {
+    [RELEASES_DIR, REGULAR_DIR, RESTRICTED_DIR].forEach(dir => {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     });
 }
 
-function archiveOldReleases() {
-    console.log('\n[*] Archiving old releases...');
-    let archived = 0;
+function deleteOldReleases() {
+    console.log('\n[*] Cleaning old releases...');
+    let deleted = 0;
     for (const dir of [REGULAR_DIR, RESTRICTED_DIR]) {
-        const files = fs.readdirSync(dir).filter(f => f.endsWith('.vsix'));
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.vsix') || f.endsWith('.zip'));
         for (const file of files) {
-            const src = path.join(dir, file);
-            const dest = path.join(ARCHIVE_DIR, file);
-            fs.renameSync(src, dest);
-            console.log(`  → ${file}`);
-            archived++;
+            fs.unlinkSync(path.join(dir, file));
+            console.log(`  ✗ ${file}`);
+            deleted++;
         }
     }
-    if (archived === 0) {
-        console.log('  (no old releases to archive)');
+    if (deleted === 0) {
+        console.log('  (no old releases to clean)');
     } else {
-        console.log(`  ✓ ${archived} file(s) archived`);
+        console.log(`  ✓ ${deleted} file(s) removed`);
     }
 }
 
@@ -47,12 +44,13 @@ function getVersion() {
     return pkg.version;
 }
 
+
 function runBuild() {
     const version = getVersion();
     console.log(`--- Starting Comprehensive Build v${version} for All Platforms ---`);
 
     ensureDirs();
-    archiveOldReleases();
+    deleteOldReleases();
 
     // Delete stale backup so prepare.js captures the current canonical version
     const bakPath = path.join(ROOT, 'package.json.bak');
@@ -87,6 +85,7 @@ function runBuild() {
         }
     }
 
+
     // Restore to full at the end
     execSync('node scripts/prepare.js', { stdio: 'inherit' });
 
@@ -94,7 +93,6 @@ function runBuild() {
     console.log(`\nRelease artifacts:`);
     console.log(`  releases/regular/    → Full builds`);
     console.log(`  releases/restricted/ → Restricted builds`);
-    console.log(`  releases/archive/    → Previous versions`);
 }
 
 runBuild();
