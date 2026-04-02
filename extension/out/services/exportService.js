@@ -37,6 +37,7 @@ exports.ExportService = void 0;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const http = __importStar(require("http"));
 const oracleService_1 = require("./oracleService");
 const exportPanel_1 = require("../panels/exportPanel");
 const EXPORT_BATCH_SIZE = 10000;
@@ -73,6 +74,7 @@ class ExportService {
     async promptAndExport(options) {
         let format = options.format;
         let filePath = options.filePath;
+        let downloadToDevice = options.downloadToDevice ?? true;
         // Either format or filePath missing -> open panel
         if (!format || !filePath) {
             if (!this.context) {
@@ -81,41 +83,52 @@ class ExportService {
             }
             const exportPanel = new exportPanel_1.ExportPanel(this.context.extensionUri);
             const userOptions = await exportPanel.show();
-            if (!userOptions || !userOptions.format || !userOptions.filePath) {
+            if (!userOptions || !userOptions.format) {
                 return undefined;
             }
             format = userOptions.format;
-            filePath = userOptions.filePath;
+            downloadToDevice = userOptions.downloadToDevice ?? true;
+            if (userOptions.filePath) {
+                filePath = userOptions.filePath;
+            }
+            else {
+                vscode.window.showErrorMessage('No file path specified for export.');
+                return undefined;
+            }
         }
         const start = Date.now();
+        const exportPath = filePath;
+        // Ensure the target directory exists
+        const exportDir = path.dirname(exportPath);
+        if (!fs.existsSync(exportDir)) {
+            fs.mkdirSync(exportDir, { recursive: true });
+        }
         try {
             let totalRows;
             if (options.statement && options.connectionName) {
-                // ── Streaming export from database ──
-                totalRows = await this.streamingExport(format, filePath, options.statement, options.connectionName, options.tableName);
+                totalRows = await this.streamingExport(format, exportPath, options.statement, options.connectionName, options.tableName);
             }
             else if (options.columns && options.rows) {
-                // ── In-memory export (small result sets from grid) ──
-                await this.writeFormat(format, filePath, options.columns, options.rows, options.tableName, options.statement);
+                await this.writeFormat(format, exportPath, options.columns, options.rows, options.tableName, options.statement);
                 totalRows = options.rows.length;
             }
             else {
                 vscode.window.showErrorMessage('Export requires either a SQL statement or data.');
                 return undefined;
             }
-            const stats = fs.statSync(filePath);
+            const stats = fs.statSync(exportPath);
             const result = {
-                filePath,
+                filePath: exportPath,
                 rowCount: totalRows,
                 fileSize: stats.size,
-                format,
+                format: format,
                 durationMs: Date.now() - start,
             };
-            vscode.window.showInformationMessage(`Exported ${result.rowCount.toLocaleString()} rows to ${path.basename(filePath)} (${this.formatFileSize(result.fileSize)}) in ${(result.durationMs / 1000).toFixed(1)}s`, 'Open File').then(choice => {
-                if (choice === 'Open File') {
-                    vscode.env.openExternal(vscode.Uri.file(filePath));
-                }
-            });
+            // Auto-download to client
+            if (downloadToDevice) {
+                await this.triggerClientDownload(exportPath);
+            }
+            vscode.window.showInformationMessage(`Exported ${result.rowCount.toLocaleString()} rows (${this.formatFileSize(result.fileSize)}) to ${path.basename(exportPath)} in ${(result.durationMs / 1000).toFixed(1)}s`);
             return result;
         }
         catch (err) {
@@ -217,6 +230,64 @@ class ExportService {
             return (bytes / 1024).toFixed(1) + ' KB';
         }
         return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    /**
+     * Triggers a client-side download by spinning up a temporary HTTP server.
+     * 1. Starts an HTTP server on a random port serving the file
+     * 2. Uses vscode.env.asExternalUri to get a client-accessible URL (handles port forwarding)
+     * 3. Uses vscode.env.openExternal to open the URL in the browser
+     * 4. Content-Disposition: attachment forces the browser to download
+     * 5. Server self-destructs after serving
+     */
+    async triggerClientDownload(filePath) {
+        const fileName = path.basename(filePath);
+        const mimeTypes = {
+            csv: 'text/csv', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            json: 'application/json', xml: 'application/xml', sql: 'text/plain', html: 'text/html'
+        };
+        const ext = path.extname(filePath).slice(1).toLowerCase();
+        const mimeType = mimeTypes[ext] || 'application/octet-stream';
+        return new Promise((resolve) => {
+            const server = http.createServer((req, res) => {
+                res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+                res.setHeader('Content-Type', mimeType);
+                res.setHeader('Cache-Control', 'no-store');
+                const readStream = fs.createReadStream(filePath);
+                readStream.pipe(res);
+                readStream.on('end', () => {
+                    server.close();
+                    resolve();
+                });
+                readStream.on('error', (err) => {
+                    console.error('[Export] File streaming error:', err.message);
+                    res.statusCode = 500;
+                    res.end('File read error');
+                    server.close();
+                    resolve();
+                });
+            });
+            server.listen(0, '127.0.0.1', async () => {
+                try {
+                    const address = server.address();
+                    const localUri = vscode.Uri.parse(`http://127.0.0.1:${address.port}/`);
+                    const externalUri = await vscode.env.asExternalUri(localUri);
+                    await vscode.env.openExternal(externalUri);
+                }
+                catch (err) {
+                    console.error('[Export] Download server error:', err.message);
+                    server.close();
+                    vscode.window.showWarningMessage(`Export saved on server at: ${filePath}`);
+                    resolve();
+                }
+            });
+            setTimeout(() => {
+                try {
+                    server.close();
+                }
+                catch { }
+                resolve();
+            }, 30000);
+        });
     }
 }
 exports.ExportService = ExportService;
@@ -496,17 +567,13 @@ class XlsxStreamWriter {
     async writeBatch(rows) {
         for (const row of rows) {
             if (this.rowIndex > this.MAX_ROWS) {
-                // Reach Excel limit, start new sheet
-                this.sheet.commit(); // Flush current sheet
+                this.sheet.commit();
                 this.sheetIndex++;
                 this.createNewSheet();
             }
-            const rowData = {};
-            this.columns.forEach((col, idx) => {
-                rowData[col.name] = row[idx];
-            });
-            const excelRow = this.sheet.addRow(rowData);
-            excelRow.commit(); // Flush row to stream immediately, release memory
+            // Use array directly — avoids creating 1000-key objects for wide tables
+            const excelRow = this.sheet.addRow(row);
+            excelRow.commit();
             this.rowIndex++;
         }
     }
