@@ -49,6 +49,7 @@ const sqlCodeLensProvider_1 = require("./providers/sqlCodeLensProvider");
 const dbmsOutputProvider_1 = require("./providers/dbmsOutputProvider");
 const sqlSnippetsProvider_1 = require("./providers/sqlSnippetsProvider");
 const sqlDiagnosticsProvider_1 = require("./providers/sqlDiagnosticsProvider");
+const sqlFoldingProvider_1 = require("./providers/sqlFoldingProvider");
 const sqlWorksheet_1 = require("./commands/sqlWorksheet");
 const queryResultsPanel_1 = require("./panels/queryResultsPanel");
 const objectViewerPanel_1 = require("./panels/objectViewerPanel");
@@ -109,7 +110,14 @@ function activate(context) {
                         }
                     }
                     catch (err) {
-                        await auditLogService.logFailedExport(data.format, 'RESULTS_GRID', data.connectionName, profile.username, data.objectName || null, data.sql, err.message);
+                        console.error('[Export] ObjectViewer export error:', err);
+                        vscode.window.showErrorMessage(`Export error: ${err.message}`);
+                        try {
+                            await auditLogService.logFailedExport(data.format, 'RESULTS_GRID', data.connectionName, profile.username, data.objectName || null, data.sql, err.message);
+                        }
+                        catch (auditErr) {
+                            console.warn('[AuditLog] Failed to log export error:', auditErr.message);
+                        }
                     }
                 });
                 objectViewers.set(key, viewer);
@@ -129,7 +137,7 @@ function activate(context) {
         });
         // ─── Register Language Features ───
         const langSelector = { language: 'oraclesql', scheme: '*' };
-        context.subscriptions.push(vscode.languages.registerCompletionItemProvider(langSelector, sqlLanguageProvider, '.'), vscode.languages.registerHoverProvider(langSelector, sqlLanguageProvider), vscode.languages.registerDocumentFormattingEditProvider(langSelector, sqlLanguageProvider), vscode.window.registerWebviewViewProvider(queryResultsPanel_1.QueryResultsPanel.viewType, queryResultsPanel));
+        context.subscriptions.push(vscode.languages.registerCompletionItemProvider(langSelector, sqlLanguageProvider, '.'), vscode.languages.registerHoverProvider(langSelector, sqlLanguageProvider), vscode.languages.registerDocumentFormattingEditProvider(langSelector, sqlLanguageProvider), vscode.languages.registerFoldingRangeProvider(langSelector, new sqlFoldingProvider_1.SqlFoldingProvider()), vscode.window.registerWebviewViewProvider(queryResultsPanel_1.QueryResultsPanel.viewType, queryResultsPanel));
         // ─── Setup Export Handler (QueryResultsPanel — static) ───
         queryResultsPanel_1.QueryResultsPanel.setExportHandler(async (data) => {
             const activeConn = connMgr.getActiveConnectionName();
@@ -150,7 +158,14 @@ function activate(context) {
                 }
             }
             catch (err) {
-                await auditLogService.logFailedExport(data.format, data.source, activeConn, activeProfile.username, null, data.results.statement, err.message);
+                console.error('[Export] ResultsGrid export error:', err);
+                vscode.window.showErrorMessage(`Export error: ${err.message}`);
+                try {
+                    await auditLogService.logFailedExport(data.format, data.source, activeConn, activeProfile.username, null, data.results.statement, err.message);
+                }
+                catch (auditErr) {
+                    console.warn('[AuditLog] Failed to log export error:', auditErr.message);
+                }
             }
         });
         // ─── Register Commands ───
@@ -573,8 +588,14 @@ function activate(context) {
                     }
                 }
                 catch (err) {
-                    await auditLogService.logFailedExport('csv', 'OBJECT_BROWSER', item.connectionName, profile.username, item.objectName, null, err.message);
+                    console.error('[Export] ObjectBrowser export error:', err);
                     vscode.window.showErrorMessage(`Export error: ${err.message}`);
+                    try {
+                        await auditLogService.logFailedExport('csv', 'OBJECT_BROWSER', item.connectionName, profile.username, item.objectName, null, err.message);
+                    }
+                    catch (auditErr) {
+                        console.warn('[AuditLog] Failed to log export error:', auditErr.message);
+                    }
                 }
             }));
         }
